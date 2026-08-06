@@ -19,7 +19,7 @@ function groupKey(r) {
 
 function matches(r, q) {
   if (!q) return true;
-  const haystack = [r.pattern, r.problem, r.summary, ...(r.stuck || []), ...(r.mistakes || []), ...(r.suggestions || [])]
+  const haystack = [r.pattern, r.problem, r.level, r.summary, ...(r.stuck || []), ...(r.mistakes || []), ...(r.suggestions || [])]
     .join(' ')
     .toLowerCase();
   return haystack.includes(q);
@@ -49,6 +49,7 @@ function renderSession(s, query) {
     <div class="session-head">
       <span class="session-problem">${highlight(s.problem, query)}</span>
       <span class="badge ${s.type === 'lesson' ? 'lesson' : 'drill'}">${escapeHtml(s.type || 'drill')}</span>
+      ${s.level ? `<span class="badge level">${escapeHtml(s.level)}</span>` : ''}
       <span class="session-date">${escapeHtml(s.date || '')}</span>
     </div>
     <div class="session-summary">${highlight(s.summary, query)}</div>

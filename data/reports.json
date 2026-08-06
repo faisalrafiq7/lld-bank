@@ -1,1 +1,29 @@
-[]
+[
+  {
+    "id": "none-parking-lot-2026-08-06",
+    "pattern": "None",
+    "problem": "Parking Lot",
+    "type": "drill",
+    "date": "2026-08-06",
+    "level": "Mid-level",
+    "summary": "Standalone drill on the classic Parking Lot problem (ParkingLot orchestrator, ParkingSpot, Ticket). No pattern was forced into the base design; Strategy was independently raised and correctly rejected/scoped by the student during the per-vehicle-type pricing extension. Requirements gathering and extensibility reasoning were strong; class design and implementation needed repeated interviewer scaffolding, including catching a real fee-calculation bug that a self-written smoke test failed to surface.",
+    "stuck": [
+      "Public API design leaked internal orchestration steps (findAvailableParkingSpot, ParkVehicle, CalculateFees, MarkSpotFree all public) instead of the minimal two-method surface; needed several 'what stops a caller from bypassing X' probes to converge on Enter/Exit-style methods.",
+      "Occupancy-tracking decision (flag on ParkingSpot vs. centralized index on ParkingLot) needed heavy Bad->Good->Great scaffolding across multiple concrete failure scenarios (partial-write leak, O(spots*tickets) nested-loop lookup) before landing on the centralized-map answer.",
+      "ParkVehicle's signature went through multiple broken iterations (missing vehicleType parameter, missing ticketID return value) before it correctly reflected 'system auto-assigns a spot and returns a ticket'."
+    ],
+    "mistakes": [
+      "Initially proposed calculateFee() as a method on Ticket, conflating a data record with business/pricing policy, before recognizing it belongs on the orchestrator.",
+      "Chose float32 for money (hourlyRate/fee) initially; only corrected to integer cents after being prompted to consider 0.1+0.2 floating-point error.",
+      "Introduced an unprompted singleton (sync.Once + package-level var) for ParkingLot with no requirement calling for global uniqueness — real over-engineering; initial recovery reasoning ('how do we stop people from calling NewParkingLot twice') showed the actual problem (sharing one instance via dependency injection vs. type-level enforcement) wasn't yet understood.",
+      "Swapped the start/end time arguments in a fee-calculation helper, which would produce negative fees in production for any real elapsed parking duration.",
+      "Wrote an ad hoc smoke test in main() that printed 'fees: 0' and moved on without suspicion, even though the result was masking the swapped-argument bug (no sleep meant entry time ≈ exit time within the same second) — the bug only surfaced when the interviewer insisted on a hand-trace with concrete, meaningfully-separated timestamps."
+    ],
+    "suggestions": [
+      "Write time-dependent logic as pure functions from the start (separate time.Now()/I/O from arithmetic) instead of needing prompting to extract a testable helper.",
+      "Be skeptical of 'green' ad hoc test runs, especially anything time-sensitive — hand-trace with meaningful, well-separated fixture values rather than trusting a coincidentally-passing result.",
+      "Default to a minimal public API surface (only the operations the requirements actually name) instead of exposing each internal step and needing it walked back later.",
+      "Keep leaning on the YAGNI/pattern-recognition instinct shown in the pricing extension (correctly self-identifying when Strategy is and isn't justified) — that reasoning was genuinely senior-level."
+    ]
+  }
+]

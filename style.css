@@ -85,6 +85,7 @@ main { display: flex; flex-direction: column; gap: 1.1rem; }
 }
 .badge.lesson { color: var(--accent); border-color: var(--accent-soft); background: var(--accent-soft); }
 .badge.drill { color: var(--warn); border-color: var(--warn-soft); background: var(--warn-soft); }
+.badge.level { color: #3fb950; border-color: rgba(63, 185, 80, 0.25); background: rgba(63, 185, 80, 0.1); }
 
 .session-date { color: var(--text-dim); font-size: .8rem; margin-left: auto; }
 
