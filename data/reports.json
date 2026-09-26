@@ -25,5 +25,48 @@
       "Default to a minimal public API surface (only the operations the requirements actually name) instead of exposing each internal step and needing it walked back later.",
       "Keep leaning on the YAGNI/pattern-recognition instinct shown in the pricing extension (correctly self-identifying when Strategy is and isn't justified) — that reasoning was genuinely senior-level."
     ]
+  },
+  {
+    "id": "factory-strategy-rate-limiter-2026-09-26",
+    "pattern": "Factory + Strategy",
+    "problem": "Rate Limiter",
+    "type": "drill",
+    "date": "2026-09-26",
+    "level": "Mid-level",
+    "summary": "Standalone Level-3 drill: an in-memory per-endpoint API gateway rate limiter in Go (RateLimiter orchestrator + Limiter interface + Response value object + TokenBucket implemented in full, SlidingWindowLog left as a declared stub). Entity modelling and YAGNI discipline were genuinely strong — no god-object, no speculative abstraction, and the central insight (per-client state shape is algorithm-specific, so it must live inside the algorithm rather than on the orchestrator) was reached after a single scenario probe. Both Factory and Strategy were built into the design without being named, which is the strongest version of that signal. Implementation was where it cost: the token-bucket refill and retry-after math went through four wrong versions (wall-clock .Second() as elapsed time, integer truncation, under-crediting drift, then over-crediting), and config validation had to be corrected three times because the fix was applied to the named instance rather than the mechanism. Extensibility (thread safety, unbounded memory) was reasoned about well, with per-client lock granularity wanted before the mechanism was known.",
+    "stuck": [
+      "Did not self-identify the creation problem — said 'not sure how to solve it' outright when asked who reads the algorithm discriminator and builds the right concrete Limiter from heterogeneous algoConfig; needed a nudge ('what type do you get unmarshalling without a struct? write the dumbest function that takes a config and returns a Limiter').",
+      "Circled several turns on where a per-client lock physically lives — correctly rejected a whole-map RWMutex held across the operation as a throughput killer and wanted per-clientID locking, but asked 'can we not take a lock on the particular key of the map?' and had to be walked to the two-level answer (RWMutex guarding only map lookup/insert with a double-check on upgrade, plus a sync.Mutex embedded in the per-client struct reachable via the pointer).",
+      "Mid-Class-Design modelling confusion ('a little confused here') reconciling one-limiter-instance-per-endpoint with the per-client state map; unblocked only by shrinking the problem to 'design just the Token Bucket for /search alone, nothing else'.",
+      "Needed the continuous-accrual vs stepped-refill distinction explained twice — though the pushback that produced it was a defensible alternative reading, not a misunderstanding."
+    ],
+    "mistakes": [
+      "Never noticed the system had no public entry point — RateLimiter.Allow was missing for most of the session (asked for twice) and the reaction was 'What is this RateLimiter.Allow? We didn't write an allow method'. The design had a constructor and completely unreachable internals for a long stretch.",
+      "Fixed the named instance rather than the class of bug, repeatedly — the dominant failure of the session. `v, _ := cfg[key].(float64)` swallowing all parse failures was flagged once, the two call sites were patched, and the mechanism left in place; it then produced two fresh live bugs (intField(cfg,'refillRate') vs config key refillRatePerSecond, and const SlidingWindowName='SlidingWindow' vs config value 'SlidingWindowLog'), each silently constructing TokenBucket{capacity:0, refillRate:0} and bricking an endpoint at runtime.",
+      "Same instance-not-mechanism pattern on the refill baseline: fixed under-crediting drift (lastRefillAt = time.Now() discarding the sub-second remainder, yielding 1.33/sec against a configured 2/sec) by switching to now.Truncate(time.Second), a wall-clock anchor that over-credits instead — two full seconds of quota handed out in 200ms of real time.",
+      "time.Now().Second() used as elapsed time — that is seconds-within-the-minute (0–59), so crossing a minute boundary yields negative elapsed, subtracts tokens, and throttles the client once a minute forever.",
+      "Integer whole-second truncation destroyed refill at exactly the configured rates — 100ms inter-arrival at 10 tokens/sec credits 0 tokens on nearly every call.",
+      "retryAfter hardcoded to 1 * time.Second, ignoring refillRate entirely (10× wrong at 10 tokens/sec); then re-anchored to the wall-clock boundary instead of lastRefillAt, so it under-reports and the client retries too early and is denied again.",
+      "Nil pointer dereference on every client's first request: `limits, ok := m[clientID]; if !ok { limits.field = ... }` on a map[string]*T writes through the nil zero-value pointer.",
+      "`if err != nil || capacity <= 0 { return nil, err }` returns (nil, nil) when the value parses but is non-positive — a nil Limiter is stored in the map and the first request to that endpoint panics.",
+      "Removed the switch's default: case in one revision — a `missing return` compile error plus a regression that lost fail-fast on an unknown algorithm.",
+      "Silently reshaped the given input contract (flattened algoConfig params to the top level) and only stated the assumption after being pushed twice.",
+      "Substituted the verification case asked for — ran Allow('c1','/payments') again instead of the requested Allow('c1','/reports'), which would have exposed that the stubbed SlidingWindow.Apply returns a zero-value Response (allowed:false, retryAfter:0), denying every request to that endpoint while telling the client to retry immediately. The default-fallback branch that requirement 9 exists for got zero coverage.",
+      "errors.New(\"invalid_config\") reused for four distinct causes (malformed config, missing algorithm, non-positive parameter, invalid request), leaving an operator unable to distinguish them; fixed only after being flagged.",
+      "Value receiver on func (rl RateLimiter) Allow(...) while the constructor returns *RateLimiter and TokenBucket methods use pointer receivers — a per-request struct copy on the hot path.",
+      "Briefly over-engineered the unconfigured-endpoint case, inventing a 'default clientID' / 'bypass the clientID' mechanism before being told to pick one of two clean options and state the tradeoff.",
+      "On memory eviction: proposed a cleanup job holding only the read lock (delete is a map write and needs the write lock), and missed that a recreated bucket starts at full capacity, so LRU eviction under memory pressure lets a throttled abuser reset their own quota.",
+      "Minor: map[string]*[]time.Time (pointer to slice), two separate time.Now() reads inside one decision, dead `type T struct`, a dead endpoint == \"\" guard, and a redundant map re-assignment after mutating through a pointer."
+    ],
+    "suggestions": [
+      "Fix the class of bug, not the instance. After every correction ask 'what mechanism allowed this, and where else does that mechanism exist?' — this was the single most repeated failure of the session, across both the config-parsing and the refill-anchor bugs.",
+      "Write the public entry-point method first. Working top-down from the public contract would have made the missing Allow impossible and forces every downstream decision into place.",
+      "Hand-trace before running. Executing the program only tests the cases you thought to write, and the one case not written (/reports) was the one that mattered. Practise tick-by-tick traces stating state at each step.",
+      "Trace the specific scenario the interviewer names, not an easier substitute — swapping it reads as avoidance even when it isn't.",
+      "State every assumption out loud the moment it's made, especially when reshaping given input (the algoConfig flattening was a fine decision, badly communicated).",
+      "Apply the same validation rigour to parsed values as to structural fields — the endpoint/algorithm checks were disciplined and the capacity/refillRate checks were an afterthought, which is backwards since the values are what the algorithm actually runs on.",
+      "Drill the two-level locking idiom in Go: RWMutex guarding a map of pointers, plus a sync.Mutex embedded in each value struct. The principle to internalise is that the lock lives on the thing it protects, and the map value being a pointer is what makes per-value locking possible at all.",
+      "Know cold: concurrent map write is a fatal error in Go, not a recoverable data race; time.Since/Sub for elapsed time and never .Second(); float vs int accumulator when accrual is continuous."
+    ]
   }
 ]
